@@ -1,11 +1,62 @@
-/.gradle/
-/build/
-**/build/
-/.idea/
+# Gradle
+.gradle/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+# Kotlin
+*.class
+*.jar
+*.war
+*.ear
+*.log
+*.cache
+*.orig
+*.kotlin_metadata
+*.kotlinc*
+
+# IDE
+.idea/
 *.iml
+*.iws
+*.ipr
+.vscode/
+.project
+.classpath
+.settings/
+
+# Android
 local.properties
-.DS_Store
+**/local.properties
 captures/
-*.apk
-*.ap_
-*.aab
+.externalNativeBuild
+.cxx/
+gradle.properties.lock
+
+# Generated
+app/release/
+app/*.apk
+app/*.aab
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+backend/node_modules/
+backend/package-lock.json
+backend/yarn.lock
+
+# Docker (compose override)
+docker-compose.override.yml
+
+# Secrets
+*.env
+*.env.*
+secrets/
+.keystore
+*.jks
+*.keystore
+
+# Jenkins
+.jenkins/
