@@ -4,34 +4,33 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Directions
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color as ComposeColor
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.google.android.gms.common.GoogleApiAvailability
+import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.GoogleMap
+import com.google.android.gms.maps.MapView
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.MarkerOptions
 import com.google.android.gms.maps.model.PolylineOptions
-import com.google.android.gms.location.LocationServices
-import com.google.maps.android.compose.*
 import com.turismo.app.data.Lugar
 
 @Composable
@@ -42,7 +41,19 @@ fun MapScreen(
     val context = LocalContext.current
     val estado by viewModel.ui.collectAsState()
     var permisosConcedidos by remember { mutableStateOf(false) }
-    var uiSettings by remember { mutableStateOf(MapUiSettings(zoomControlsEnabled = false)) }
+    var selectedPlace by remember { mutableStateOf<Lugar?>(null) }
+    var mapReady by remember { mutableStateOf(false) }
+    var playServicesOk by remember { mutableStateOf(true) }
+    var mapView by remember { mutableStateOf<MapView?>(null) }
+    var googleMap by remember { mutableStateOf<GoogleMap?>(null) }
+
+    // Check Play Services
+    LaunchedEffect(Unit) {
+        val result = GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context)
+        if (result != com.google.android.gms.common.ConnectionResult.SUCCESS) {
+            playServicesOk = false
+        }
+    }
 
     val locationPermissionRequest = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions(),
@@ -51,9 +62,6 @@ fun MapScreen(
                 (permissions[Manifest.permission.ACCESS_COARSE_LOCATION] ?: false)
         permisosConcedidos = concedido
         viewModel.permisoUbicacion(concedido)
-        if (concedido) {
-            obtenerUbicacionMapa(context, viewModel)
-        }
     }
 
     LaunchedEffect(Unit) {
@@ -63,60 +71,91 @@ fun MapScreen(
         viewModel.permisoUbicacion(permisosConcedidos)
         if (!permisosConcedidos) {
             locationPermissionRequest.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
-        } else {
-            obtenerUbicacionMapa(context, viewModel)
         }
     }
 
-    val userLocation = estado.location.let { loc ->
-        if (loc.lat != null && loc.lng != null) LatLng(loc.lat, loc.lng) else null
+    if (!playServicesOk) {
+        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("Google Play Services no está disponible en este dispositivo", style = MaterialTheme.typography.bodyLarge)
+        }
+        return
     }
-
-    val defaultPosition = userLocation ?: LatLng(19.4326, -99.1332)
-    val cameraPositionState = rememberCameraPositionState {
-        position = CameraPosition.fromLatLngZoom(defaultPosition, 10f)
-    }
-
-    var selectedPlace by remember { mutableStateOf<Lugar?>(null) }
 
     Box(modifier = modifier.fillMaxSize()) {
-        GoogleMap(
+        AndroidView(
+            factory = { ctx ->
+                MapView(ctx).apply {
+                    onCreate(null)
+                    onResume()
+                    getMapAsync { map ->
+                        googleMap = map
+                        map.uiSettings.isZoomControlsEnabled = false
+                        map.uiSettings.isMyLocationButtonEnabled = false
+                        map.uiSettings.isMapToolbarEnabled = false
+                        map.setMinZoomPreference(5f)
+                        map.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(19.4326, -99.1332), 10f))
+                        map.setOnMarkerClickListener { marker ->
+                            val lugar = marker.tag as? Lugar
+                            if (lugar != null) {
+                                selectedPlace = lugar
+                                viewModel.cargarComentarios(lugar.id)
+                            }
+                            true
+                        }
+                        map.setOnMapClickListener {
+                            selectedPlace = null
+                            viewModel.limpiarRuta()
+                        }
+                        mapReady = true
+                    }
+                    mapView = this
+                }
+            },
             modifier = Modifier.fillMaxSize(),
-            cameraPositionState = cameraPositionState,
-            uiSettings = uiSettings,
-            onMapClick = { selectedPlace = null; viewModel.limpiarRuta() },
-        ) {
-            if (userLocation != null) {
-                Marker(
-                    state = rememberMarkerState(position = userLocation),
-                    title = "Tu ubicacion",
-                    icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE),
-                )
-            }
+            update = { mv ->
+                val map = googleMap ?: return@AndroidView
+                map.clear()
 
-            for (lugar in estado.lugares.filter { it.lat != null && it.lng != null }) {
-                val pos = LatLng(lugar.lat!!, lugar.lng!!)
-                val markerState = rememberMarkerState(position = pos)
-                Marker(
-                    state = markerState,
-                    title = lugar.nombre,
-                    snippet = lugar.categoria,
-                    icon = BitmapDescriptorFactory.defaultMarker(markerHue(lugar.categoria)),
-                    onClick = {
-                        selectedPlace = lugar
-                        viewModel.cargarComentarios(lugar.id)
-                        false
-                    },
-                )
-            }
+                // User location marker
+                val loc = estado.location
+                if (loc.lat != null && loc.lng != null) {
+                    map.addMarker(MarkerOptions()
+                        .position(LatLng(loc.lat, loc.lng))
+                        .title("Tu ubicacion")
+                        .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE)))
+                }
 
-            if (estado.ruta.coordinates.isNotEmpty()) {
-                val coords = estado.ruta.coordinates.map { LatLng(it.first, it.second) }
-                Polyline(
-                    points = coords,
-                    color = ComposeColor(0xFF0D9488),
-                    width = 6f,
-                )
+                // Place markers
+                for (lugar in estado.lugares) {
+                    val lat = lugar.lat ?: continue
+                    val lng = lugar.lng ?: continue
+                    val marker = map.addMarker(MarkerOptions()
+                        .position(LatLng(lat, lng))
+                        .title(lugar.nombre)
+                        .snippet(lugar.categoria)
+                        .icon(BitmapDescriptorFactory.defaultMarker(markerHue(lugar.categoria))))
+                    marker?.tag = lugar
+                }
+
+                // Route polyline
+                if (estado.ruta.coordinates.isNotEmpty()) {
+                    val coords = estado.ruta.coordinates.map { LatLng(it.first, it.second) }
+                    map.addPolyline(PolylineOptions()
+                        .addAll(coords)
+                        .color(0xFF0D9488.toInt())
+                        .width(6f))
+                }
+            },
+        )
+
+        if (!mapReady) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.background,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
             }
         }
 
@@ -128,11 +167,16 @@ fun MapScreen(
         )
 
         // Boton centrar ubicacion
-        Column(Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = (if (selectedPlace != null) 220 else 16).dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(
+            Modifier.align(Alignment.BottomEnd)
+                .padding(end = 16.dp, bottom = if (selectedPlace != null) 220.dp else 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             FloatingActionButton(
                 onClick = {
-                    userLocation?.let { loc ->
-                        cameraPositionState.position = CameraPosition.fromLatLngZoom(loc, 15f)
+                    val loc = estado.location
+                    if (loc.lat != null && loc.lng != null) {
+                        googleMap?.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(loc.lat, loc.lng), 15f))
                     }
                 },
                 modifier = Modifier.size(48.dp),
@@ -162,10 +206,9 @@ fun MapScreen(
                                 val loc = estado.location
                                 if (loc.lat != null && loc.lng != null && lugar.lat != null && lugar.lng != null) {
                                     viewModel.calcularRuta(loc.lat, loc.lng, lugar.lat, lugar.lng)
-                                    // Animate camera to show route
-                                    cameraPositionState.position = CameraPosition.fromLatLngZoom(
+                                    googleMap?.animateCamera(CameraUpdateFactory.newLatLngZoom(
                                         LatLng((loc.lat + lugar.lat) / 2, (loc.lng + lugar.lng) / 2), 12f
-                                    )
+                                    ))
                                 }
                             },
                             enabled = estado.location.lat != null && lugar.lat != null,
@@ -227,16 +270,4 @@ private fun FiltroCategoriasMapa(
             }
         }
     }
-}
-
-private fun obtenerUbicacionMapa(context: android.content.Context, viewModel: TurismoViewModel) {
-    if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
-        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
-    LocationServices.getFusedLocationProviderClient(context)
-        .getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
-        .addOnSuccessListener { location ->
-            if (location != null) {
-                viewModel.actualizarUbicacion(location.latitude, location.longitude)
-            }
-        }
 }
