@@ -1,65 +1,37 @@
 package com.turismo.app.ui
 
 import android.Manifest
-import android.annotation.SuppressLint
-import android.content.Context
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.drawable.ColorDrawable
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Directions
 import androidx.compose.material.icons.filled.MyLocation
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color as ComposeColor
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
-import com.google.android.gms.location.FusedLocationProviderClient
-import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
-import org.osmdroid.util.GeoPoint
-import org.osmdroid.views.MapView
-import org.osmdroid.views.overlay.Marker
-import org.osmdroid.views.overlay.mylocation.IMyLocationConsumer
-import org.osmdroid.views.overlay.mylocation.IMyLocationProvider
-import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
-import org.osmdroid.config.Configuration
+import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
+import com.google.android.gms.maps.model.CameraPosition
+import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.PolylineOptions
+import com.google.android.gms.location.LocationServices
+import com.google.maps.android.compose.*
 import com.turismo.app.data.Lugar
 
 @Composable
@@ -69,204 +41,171 @@ fun MapScreen(
 ) {
     val context = LocalContext.current
     val estado by viewModel.ui.collectAsState()
-    var mapViewRef by remember { mutableStateOf<MapView?>(null) }
-    var myLocationOverlay by remember { mutableStateOf<MyLocationNewOverlay?>(null) }
     var permisosConcedidos by remember { mutableStateOf(false) }
-    var cargando by remember { mutableStateOf(true) }
+    var uiSettings by remember { mutableStateOf(MapUiSettings(zoomControlsEnabled = false)) }
 
     val locationPermissionRequest = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions(),
     ) { permissions ->
-        val fineLocation = permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
-        val coarseLocation = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] ?: false
-        val concedido = fineLocation || coarseLocation
+        val concedido = (permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false) ||
+                (permissions[Manifest.permission.ACCESS_COARSE_LOCATION] ?: false)
         permisosConcedidos = concedido
         viewModel.permisoUbicacion(concedido)
         if (concedido) {
-            myLocationOverlay?.enableMyLocation()
-            myLocationOverlay?.enableFollowLocation()
-            obtenerUbicacion(context, viewModel)
+            obtenerUbicacionMapa(context, viewModel)
         }
     }
 
     LaunchedEffect(Unit) {
-        val fineGranted = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_FINE_LOCATION,
-        ) == PackageManager.PERMISSION_GRANTED
-        val coarseGranted = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-        ) == PackageManager.PERMISSION_GRANTED
-
+        val fineGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val coarseGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
         permisosConcedidos = fineGranted || coarseGranted
         viewModel.permisoUbicacion(permisosConcedidos)
-
         if (!permisosConcedidos) {
-            locationPermissionRequest.launch(
-                arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION,
-                ),
-            )
+            locationPermissionRequest.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
         } else {
-            obtenerUbicacion(context, viewModel)
+            obtenerUbicacionMapa(context, viewModel)
         }
     }
+
+    val userLocation = estado.location.let { loc ->
+        if (loc.lat != null && loc.lng != null) LatLng(loc.lat, loc.lng) else null
+    }
+
+    val defaultPosition = userLocation ?: LatLng(19.4326, -99.1332)
+    val cameraPositionState = rememberCameraPositionState {
+        position = CameraPosition.fromLatLngZoom(defaultPosition, 10f)
+    }
+
+    var selectedPlace by remember { mutableStateOf<Lugar?>(null) }
 
     Box(modifier = modifier.fillMaxSize()) {
-        AndroidView(
-            factory = { ctx ->
-                Configuration.getInstance().load(
-                    ctx,
-                    android.preference.PreferenceManager.getDefaultSharedPreferences(ctx),
-                )
-                MapView(ctx).apply {
-                    setTileSource(TileSourceFactory.MAPNIK)
-                    setMultiTouchControls(true)
-                    setBuiltInZoomControls(false)
-
-                    myLocationOverlay = MyLocationNewOverlay(
-                        FusedLocationProvider(context),
-                        this,
-                    ).apply {
-                        enableMyLocation()
-                    }
-                    overlays.add(myLocationOverlay)
-
-                    mapViewRef = this
-                    cargando = false
-                }
-            },
+        GoogleMap(
             modifier = Modifier.fillMaxSize(),
-            update = { mapView ->
-                mapView.overlays.removeAll { it is Marker }
-                agregarLugaresAlMapa(mapView, estado.lugares)
-            },
-        )
+            cameraPositionState = cameraPositionState,
+            uiSettings = uiSettings,
+            onMapClick = { selectedPlace = null; viewModel.limpiarRuta() },
+        ) {
+            if (userLocation != null) {
+                Marker(
+                    state = rememberMarkerState(position = userLocation),
+                    title = "Tu ubicacion",
+                    icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE),
+                )
+            }
 
-        if (cargando) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(ComposeColor.White.copy(alpha = 0.8f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator()
+            for (lugar in estado.lugares.filter { it.lat != null && it.lng != null }) {
+                val pos = LatLng(lugar.lat!!, lugar.lng!!)
+                val markerState = rememberMarkerState(position = pos)
+                Marker(
+                    state = markerState,
+                    title = lugar.nombre,
+                    snippet = lugar.categoria,
+                    icon = BitmapDescriptorFactory.defaultMarker(markerHue(lugar.categoria)),
+                    onClick = {
+                        selectedPlace = lugar
+                        viewModel.cargarComentarios(lugar.id)
+                        false
+                    },
+                )
+            }
+
+            if (estado.ruta.coordinates.isNotEmpty()) {
+                val coords = estado.ruta.coordinates.map { LatLng(it.first, it.second) }
+                Polyline(
+                    points = coords,
+                    color = ComposeColor(0xFF0D9488),
+                    width = 6f,
+                )
             }
         }
 
+        // Filtro categorias
         FiltroCategoriasMapa(
             categorias = estado.categorias,
-            onCategoriaClick = { categoria ->
-                viewModel.filtrarPorCategoria(categoria)
-            },
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 48.dp, start = 16.dp, end = 16.dp),
+            onCategoriaClick = { viewModel.filtrarPorCategoria(it) },
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 48.dp, start = 16.dp, end = 16.dp),
         )
 
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            IconButton(
+        // Boton centrar ubicacion
+        Column(Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = (if (selectedPlace != null) 220 else 16).dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            FloatingActionButton(
                 onClick = {
-                    val mv = mapViewRef
-                    if (mv != null) {
-                        myLocationOverlay?.myLocation?.let { location ->
-                            centrarEnUbicacion(mv, location.latitude, location.longitude)
-                        }
+                    userLocation?.let { loc ->
+                        cameraPositionState.position = CameraPosition.fromLatLngZoom(loc, 15f)
                     }
                 },
-                modifier = Modifier
-                    .size(48.dp)
-                    .background(
-                        color = androidx.compose.ui.graphics.Color.White,
-                        shape = CircleShape,
-                    )
-                    .clip(CircleShape),
+                modifier = Modifier.size(48.dp),
+                containerColor = MaterialTheme.colorScheme.surface,
             ) {
-                Icon(
-                    Icons.Default.MyLocation,
-                    contentDescription = "Centrar en mi ubicacion",
-                    tint = MaterialTheme.colorScheme.primary,
-                )
+                Icon(Icons.Default.MyLocation, "Centrar", tint = MaterialTheme.colorScheme.primary)
+            }
+        }
+
+        // Info card for selected marker
+        selectedPlace?.let { lugar ->
+            Card(
+                modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp).fillMaxWidth(),
+                elevation = CardDefaults.cardElevation(6.dp),
+                shape = RoundedCornerShape(16.dp),
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text(lugar.nombre, style = MaterialTheme.typography.titleMedium)
+                    Text(lugar.categoria, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    if (lugar.direccion != null) {
+                        Text(lugar.direccion, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                val loc = estado.location
+                                if (loc.lat != null && loc.lng != null && lugar.lat != null && lugar.lng != null) {
+                                    viewModel.calcularRuta(loc.lat, loc.lng, lugar.lat, lugar.lng)
+                                    // Animate camera to show route
+                                    cameraPositionState.position = CameraPosition.fromLatLngZoom(
+                                        LatLng((loc.lat + lugar.lat) / 2, (loc.lng + lugar.lng) / 2), 12f
+                                    )
+                                }
+                            },
+                            enabled = estado.location.lat != null && lugar.lat != null,
+                        ) {
+                            Icon(Icons.Default.Directions, "Ruta", modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Como llegar")
+                        }
+                        OutlinedButton(onClick = { selectedPlace = null; viewModel.limpiarRuta() }) {
+                            Text("Cerrar")
+                        }
+                    }
+                    if (estado.ruta.cargando) {
+                        Spacer(Modifier.height(8.dp))
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                    }
+                    if (estado.ruta.distance > 0) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Distancia: ${"%.1f".format(estado.ruta.distance / 1000)} km | Tiempo: ${"%.0f".format(estado.ruta.duration / 60)} min",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
             }
         }
     }
 }
 
-private class FusedLocationProvider(private val context: Context) : IMyLocationProvider {
-    private val fusedClient: FusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(context)
-    private var currentLocation: android.location.Location? = null
-
-    @SuppressLint("MissingPermission")
-    override fun startLocationProvider(consumer: IMyLocationConsumer): Boolean {
-        fusedClient.lastLocation.addOnSuccessListener { location ->
-            if (location != null) {
-                currentLocation = location
-                consumer.onLocationChanged(location, this)
-            }
-        }
-        return true
-    }
-
-    override fun stopLocationProvider() {}
-
-    override fun getLastKnownLocation(): android.location.Location? = currentLocation
-
-    override fun destroy() {}
-}
-
-private fun obtenerUbicacion(context: Context, viewModel: TurismoViewModel) {
-    val fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
-    @SuppressLint("MissingPermission")
-    fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
-        .addOnSuccessListener { location ->
-            if (location != null) {
-                viewModel.actualizarUbicacion(location.latitude, location.longitude)
-            }
-        }
-}
-
-private fun centrarEnUbicacion(mapView: MapView, lat: Double, lng: Double) {
-    val controller = mapView.controller
-    controller.setZoom(15.0)
-    controller.animateTo(GeoPoint(lat, lng))
-}
-
-private fun agregarLugaresAlMapa(mapView: MapView, lugares: List<Lugar>) {
-    val lugaresConCoordenadas = lugares.filter { it.lat != null && it.lng != null }
-    if (lugaresConCoordenadas.isEmpty()) return
-
-    for (lugar in lugaresConCoordenadas) {
-        val marker = Marker(mapView)
-        marker.position = GeoPoint(lugar.lat!!, lugar.lng!!)
-        marker.title = lugar.nombre
-        marker.snippet = lugar.categoria
-        marker.icon = createCategoryMarker(lugar.categoria)
-        mapView.overlays.add(marker)
-    }
-}
-
-private fun createCategoryMarker(categoria: String): ColorDrawable {
-    val color = getCategoryColor(categoria)
-    return ColorDrawable(color)
-}
-
-private fun getCategoryColor(categoria: String): Int {
+private fun markerHue(categoria: String): Float {
     return when (categoria.lowercase()) {
-        "restaurante", "restaurant" -> Color.parseColor("#FF6B6B")
-        "hotel", "hospedaje" -> Color.parseColor("#4ECDC4")
-        "museo" -> Color.parseColor("#45B7D1")
-        "parque", "naturaleza" -> Color.parseColor("#96CEB4")
-        "bar", "vida nocturna" -> Color.parseColor("#FECEA8")
-        "tienda", "compras" -> Color.parseColor("#D4A5A5")
-        "playa" -> Color.parseColor("#87CEEB")
-        else -> Color.parseColor("#0D9488")
+        "restaurante" -> BitmapDescriptorFactory.HUE_RED
+        "playa" -> BitmapDescriptorFactory.HUE_CYAN
+        "museo" -> BitmapDescriptorFactory.HUE_BLUE
+        "parque" -> BitmapDescriptorFactory.HUE_GREEN
+        "monumento" -> BitmapDescriptorFactory.HUE_ORANGE
+        "mirador" -> BitmapDescriptorFactory.HUE_ROSE
+        "centro historico" -> BitmapDescriptorFactory.HUE_VIOLET
+        else -> BitmapDescriptorFactory.HUE_GREEN
     }
 }
 
@@ -276,52 +215,28 @@ private fun FiltroCategoriasMapa(
     onCategoriaClick: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
-        modifier = modifier,
-        shape = MaterialTheme.shapes.large,
-        shadowElevation = 4.dp,
-    ) {
-        LazyRow(
-            contentPadding = PaddingValues(8.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
+    Surface(modifier = modifier, shape = MaterialTheme.shapes.large, shadowElevation = 4.dp) {
+        LazyRow(contentPadding = PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             items(categorias) { cat ->
-                FiltroChipMapa(
-                    emoji = cat.icono,
-                    nombre = cat.nombre,
-                    onClick = { onCategoriaClick(cat.nombre) },
-                )
+                Card(onClick = { onCategoriaClick(cat.nombre) }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), elevation = CardDefaults.cardElevation(2.dp)) {
+                    Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(cat.icono, style = MaterialTheme.typography.bodyMedium)
+                        Text(cat.nombre, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 4.dp))
+                    }
+                }
             }
         }
     }
 }
 
-@Composable
-private fun FiltroChipMapa(
-    emoji: String,
-    nombre: String,
-    onClick: () -> Unit,
-) {
-    Card(
-        modifier = Modifier,
-        onClick = onClick,
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-        ),
-        elevation = CardDefaults.cardElevation(2.dp),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(text = emoji, style = MaterialTheme.typography.bodyMedium)
-            Text(
-                text = nombre,
-                style = MaterialTheme.typography.labelMedium,
-                modifier = Modifier.padding(start = 4.dp),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+private fun obtenerUbicacionMapa(context: android.content.Context, viewModel: TurismoViewModel) {
+    if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
+        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
+    LocationServices.getFusedLocationProviderClient(context)
+        .getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
+        .addOnSuccessListener { location ->
+            if (location != null) {
+                viewModel.actualizarUbicacion(location.latitude, location.longitude)
+            }
         }
-    }
 }

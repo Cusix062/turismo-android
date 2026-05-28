@@ -1,0 +1,45 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<project>
+  <description>Build automático de Turismo App (Android APK)</description>
+  <keepDependencies>false</keepDependencies>
+  <properties/>
+  <builders>
+    <hudson.tasks.Shell>
+      <command>#!/bin/bash
+set -e
+
+export ANDROID_HOME=/opt/android-sdk
+export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/build-tools/36.0.0:$PATH
+
+cd /workspace/turismo-android
+
+echo ""
+echo "===================================="
+echo "  TURISMO ANDROID - BUILD PIPELINE"
+echo "===================================="
+echo ""
+
+echo "[1/3] Cleaning old builds..."
+rm -rf app/build/outputs
+
+echo ""
+echo "[2/3] Building Android APK..."
+./gradlew assembleDebug --no-daemon 2&gt;&amp;1
+
+echo ""
+echo "[3/3] Verifying APK..."
+if [ -f app/build/outputs/apk/debug/app-debug.apk ]; then
+    echo "SUCCESS: APK generated"
+    ls -lh app/build/outputs/apk/debug/app-debug.apk
+else
+    echo "WARNING: APK not found, checking build dir..."
+    find app/build -name "*.apk" -type f 2>/dev/null
+fi
+
+echo ""
+echo "===================================="
+echo "  BUILD COMPLETED"
+echo "===================================="</command>
+    </hudson.tasks.Shell>
+  </builders>
+</project>

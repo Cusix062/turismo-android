@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -47,6 +48,7 @@ import com.turismo.app.data.FavoritoItem
 fun FavoritosScreen(
     viewModel: TurismoViewModel,
     modifier: Modifier = Modifier,
+    onCerrarSesion: () -> Unit = {},
 ) {
     val estado by viewModel.ui.collectAsState()
     val snack = remember { SnackbarHostState() }
@@ -67,6 +69,9 @@ fun FavoritosScreen(
                 actions = {
                     IconButton(onClick = { viewModel.refrescarFavoritos() }) {
                         Icon(Icons.Default.Refresh, contentDescription = "Actualizar")
+                    }
+                    IconButton(onClick = onCerrarSesion) {
+                        Icon(Icons.Default.ExitToApp, contentDescription = "Cerrar sesion")
                     }
                 },
             )
@@ -111,7 +116,7 @@ fun FavoritosScreen(
                     items(estado.favoritos, key = { it.lugarId }) { item ->
                         TarjetaFavorito(
                             item = item,
-                            onEliminar = { item.lugarId?.let { viewModel.removerFavorito(it) } },
+                            onEliminar = { viewModel.removerFavorito(item.lugarId) },
                         )
                     }
                 }

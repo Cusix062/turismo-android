@@ -1,24 +1,44 @@
 package com.turismo.app.ui
 
+import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.turismo.app.data.ApiClient
-import com.turismo.app.data.AddFavoritoBody
-import com.turismo.app.data.FavoritoItem
-import com.turismo.app.data.Lugar
-import com.turismo.app.data.SearchSuggestion
-import kotlinx.coroutines.async
+import com.turismo.app.data.*
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.toRequestBody
 
 data class LocationState(
     val lat: Double? = null,
     val lng: Double? = null,
     val hasPermission: Boolean = false,
+)
+
+data class AuthState(
+    val logueado: Boolean = false,
+    val usuario: UsuarioToken? = null,
+    val cargando: Boolean = false,
+    val error: String? = null,
+)
+
+data class ComentariosState(
+    val lista: List<Comentario> = emptyList(),
+    val cargando: Boolean = false,
+)
+
+data class RutaState(
+    val coordinates: List<Pair<Double, Double>> = emptyList(),
+    val distance: Double = 0.0,
+    val duration: Double = 0.0,
+    val cargando: Boolean = false,
 )
 
 data class TurismoUiState(
@@ -29,10 +49,16 @@ data class TurismoUiState(
     val suggestions: List<SearchSuggestion> = emptyList(),
     val categorias: List<CategoriaItem> = emptyList(),
     val location: LocationState = LocationState(),
-    val usuarioDemoId: Int = 1,
     val cargando: Boolean = false,
     val cargandoHome: Boolean = false,
+    val agregandoLugar: Boolean = false,
+    val recomendados: List<Lugar> = emptyList(),
+    val cercanos: List<Lugar> = emptyList(),
     val mensaje: String? = null,
+    val auth: AuthState = AuthState(),
+    val comentarios: ComentariosState = ComentariosState(),
+    val ruta: RutaState = RutaState(),
+    val lugarSeleccionado: Lugar? = null,
 )
 
 data class CategoriaItem(
@@ -61,8 +87,52 @@ class TurismoViewModel : ViewModel() {
                 CategoriaItem("Centro Historico", "\uD83C\uDFE2"),
             ),
         )
-        refrescarTodo()
     }
+
+    // ---- Auth ----
+
+    fun login(email: String, password: String) {
+        viewModelScope.launch {
+            _ui.value = _ui.value.copy(auth = _ui.value.auth.copy(cargando = true, error = null))
+            runCatching {
+                val res = api.login(AuthRequest(email, password))
+                ApiClient.token = res.data.token
+                _ui.value = _ui.value.copy(
+                    auth = AuthState(logueado = true, usuario = res.data),
+                )
+            }.onFailure { e ->
+                _ui.value = _ui.value.copy(
+                    auth = _ui.value.auth.copy(cargando = false, error = "Email o contraseña incorrectos"),
+                )
+            }
+        }
+    }
+
+    fun register(email: String, nombre: String, password: String) {
+        viewModelScope.launch {
+            _ui.value = _ui.value.copy(auth = _ui.value.auth.copy(cargando = true, error = null))
+            runCatching {
+                val res = api.register(AuthRequest(email, password, nombre))
+                ApiClient.token = res.data.token
+                _ui.value = _ui.value.copy(
+                    auth = AuthState(logueado = true, usuario = res.data),
+                )
+            }.onFailure { e ->
+                _ui.value = _ui.value.copy(
+                    auth = _ui.value.auth.copy(cargando = false, error = "Error al registrarse. ¿El email ya existe?"),
+                )
+            }
+        }
+    }
+
+    fun cerrarSesion() {
+        ApiClient.token = null
+        _ui.value = TurismoUiState(
+            categorias = _ui.value.categorias,
+        )
+    }
+
+    // ---- Location ----
 
     fun actualizarUbicacion(lat: Double, lng: Double) {
         _ui.value = _ui.value.copy(
@@ -76,21 +146,23 @@ class TurismoViewModel : ViewModel() {
         )
     }
 
+    // ---- Data loading ----
+
     fun refrescarTodo() {
         viewModelScope.launch {
             _ui.value = _ui.value.copy(cargando = true, mensaje = null)
             runCatching {
                 val lugares = api.getLugares().data
-                val favoritos = api.getFavoritos(_ui.value.usuarioDemoId).data
+                val favoritos = if (_ui.value.auth.logueado) {
+                    api.getFavoritos().data
+                } else emptyList()
                 _ui.value = _ui.value.copy(
-                    lugares = lugares,
-                    favoritos = favoritos,
-                    cargando = false,
+                    lugares = lugares, favoritos = favoritos, cargando = false,
                 )
             }.onFailure { e ->
                 _ui.value = _ui.value.copy(
                     cargando = false,
-                    mensaje = e.message ?: "Error de red. ¿Está el backend en marcha?",
+                    mensaje = e.message ?: "Error de red",
                 )
             }
         }
@@ -103,17 +175,16 @@ class TurismoViewModel : ViewModel() {
                 val loc = _ui.value.location
                 val lugaresDeferred = async { api.getLugares().data }
                 val popularesDeferred = async {
-                    runCatching {
-                        api.getLugaresPopulares(lat = loc.lat, lng = loc.lng).data
-                    }.getOrDefault(emptyList())
+                    runCatching { api.getLugaresPopulares(lat = loc.lat, lng = loc.lng).data }
+                        .getOrDefault(emptyList())
                 }
                 val nuevosDeferred = async {
-                    runCatching {
-                        api.getLugaresNuevos().data
-                    }.getOrDefault(emptyList())
+                    runCatching { api.getLugaresNuevos().data }.getOrDefault(emptyList())
                 }
                 val favoritosDeferred = async {
-                    api.getFavoritos(_ui.value.usuarioDemoId).data
+                    if (_ui.value.auth.logueado) {
+                        runCatching { api.getFavoritos().data }.getOrDefault(emptyList())
+                    } else emptyList()
                 }
 
                 _ui.value = _ui.value.copy(
@@ -158,7 +229,7 @@ class TurismoViewModel : ViewModel() {
             }.onFailure { e ->
                 _ui.value = _ui.value.copy(
                     cargando = false,
-                    mensaje = e.message ?: "Error al filtrar por categoría",
+                    mensaje = e.message ?: "Error al filtrar",
                 )
             }
         }
@@ -183,7 +254,7 @@ class TurismoViewModel : ViewModel() {
         viewModelScope.launch {
             _ui.value = _ui.value.copy(cargando = true, mensaje = null)
             runCatching {
-                val favoritos = api.getFavoritos(_ui.value.usuarioDemoId).data
+                val favoritos = api.getFavoritos().data
                 _ui.value = _ui.value.copy(favoritos = favoritos, cargando = false)
             }.onFailure { e ->
                 _ui.value = _ui.value.copy(
@@ -198,12 +269,12 @@ class TurismoViewModel : ViewModel() {
         viewModelScope.launch {
             _ui.value = _ui.value.copy(mensaje = null)
             runCatching {
-                api.addFavorito(_ui.value.usuarioDemoId, AddFavoritoBody(lugarId))
-                val favoritos = api.getFavoritos(_ui.value.usuarioDemoId).data
+                api.addFavorito(AddFavoritoBody(lugarId))
+                val favoritos = api.getFavoritos().data
                 _ui.value = _ui.value.copy(favoritos = favoritos)
             }.onFailure { e ->
                 _ui.value = _ui.value.copy(
-                    mensaje = e.message ?: "No se pudo añadir favorito (¿ya existe?)",
+                    mensaje = e.message ?: "No se pudo añadir favorito",
                 )
             }
         }
@@ -213,8 +284,8 @@ class TurismoViewModel : ViewModel() {
         viewModelScope.launch {
             _ui.value = _ui.value.copy(mensaje = null)
             runCatching {
-                api.removeFavorito(_ui.value.usuarioDemoId, lugarId)
-                val favoritos = api.getFavoritos(_ui.value.usuarioDemoId).data
+                api.removeFavorito(lugarId)
+                val favoritos = api.getFavoritos().data
                 _ui.value = _ui.value.copy(favoritos = favoritos)
             }.onFailure { e ->
                 _ui.value = _ui.value.copy(
@@ -222,6 +293,151 @@ class TurismoViewModel : ViewModel() {
                 )
             }
         }
+    }
+
+    // ---- Recomendados ----
+
+    fun cargarRecomendados() {
+        viewModelScope.launch {
+            val loc = _ui.value.location
+            runCatching {
+                val res = api.getLugaresRecomendados(lat = loc.lat, lng = loc.lng, limite = 10)
+                _ui.value = _ui.value.copy(recomendados = res.data)
+            }
+        }
+    }
+
+    // ---- Cercanos ----
+
+    fun cargarCercanos(radio: Double = 10.0) {
+        viewModelScope.launch {
+            val loc = _ui.value.location
+            if (loc.lat == null || loc.lng == null) return@launch
+            runCatching {
+                val res = api.getLugaresCercanos(loc.lat, loc.lng, radio)
+                _ui.value = _ui.value.copy(cercanos = res.data)
+            }
+        }
+    }
+
+    // ---- Add Place ----
+
+    fun agregarLugar(nombre: String, descripcion: String, categoria: String, lat: Double, lng: Double, direccion: String?, horario: String?, imageUri: Uri?, context: Context) {
+        viewModelScope.launch {
+            _ui.value = _ui.value.copy(agregandoLugar = true, mensaje = null)
+            runCatching {
+                val nombrePart = nombre.toRequestBody("text/plain".toMediaTypeOrNull())
+                val descripcionPart = descripcion.toRequestBody("text/plain".toMediaTypeOrNull())
+                val categoriaPart = categoria.toRequestBody("text/plain".toMediaTypeOrNull())
+                val latPart = lat.toString().toRequestBody("text/plain".toMediaTypeOrNull())
+                val lngPart = lng.toString().toRequestBody("text/plain".toMediaTypeOrNull())
+                val direccionPart = direccion?.takeIf { it.isNotBlank() }?.toRequestBody("text/plain".toMediaTypeOrNull())
+                val horarioPart = horario?.takeIf { it.isNotBlank() }?.toRequestBody("text/plain".toMediaTypeOrNull())
+
+                val imagePart = imageUri?.let { uri ->
+                    val inputStream = context.contentResolver.openInputStream(uri)
+                    val bytes = inputStream?.readBytes()
+                    inputStream?.close()
+                    if (bytes != null) {
+                        val requestBody = bytes.toRequestBody("image/*".toMediaTypeOrNull())
+                        MultipartBody.Part.createFormData("imagen", "photo.jpg", requestBody)
+                    } else null
+                }
+
+                api.createLugar(nombrePart, descripcionPart, categoriaPart, latPart, lngPart, direccionPart, horarioPart, imagePart)
+                _ui.value = _ui.value.copy(agregandoLugar = false, mensaje = "Lugar creado exitosamente!")
+                refrescarLugares()
+            }.onFailure { e ->
+                _ui.value = _ui.value.copy(agregandoLugar = false, mensaje = e.message ?: "Error al crear lugar")
+            }
+        }
+    }
+
+    fun limpiarAgregarLugar() {
+        _ui.value = _ui.value.copy(mensaje = null, agregandoLugar = false)
+    }
+
+    // ---- Visitas ----
+
+    fun visitarLugar(lugarId: Int) {
+        viewModelScope.launch {
+            runCatching { api.visitarLugar(lugarId) }
+        }
+    }
+
+    // ---- Comments ----
+
+    fun cargarComentarios(lugarId: Int) {
+        viewModelScope.launch {
+            _ui.value = _ui.value.copy(
+                comentarios = ComentariosState(cargando = true),
+            )
+            runCatching {
+                val lista = api.getComentarios(lugarId).data
+                _ui.value = _ui.value.copy(
+                    comentarios = ComentariosState(lista = lista),
+                )
+            }.onFailure {
+                _ui.value = _ui.value.copy(
+                    comentarios = ComentariosState(cargando = false),
+                )
+            }
+        }
+    }
+
+    fun agregarComentario(lugarId: Int, texto: String, calificacion: Int = 5) {
+        viewModelScope.launch {
+            runCatching {
+                api.addComentario(lugarId, AddComentarioBody(texto, calificacion))
+                cargarComentarios(lugarId)
+            }.onFailure { e ->
+                _ui.value = _ui.value.copy(
+                    mensaje = e.message ?: "Error al enviar comentario",
+                )
+            }
+        }
+    }
+
+    // ---- Routes ----
+
+    fun calcularRuta(origenLat: Double, origenLng: Double, destinoLat: Double, destinoLng: Double) {
+        viewModelScope.launch {
+            _ui.value = _ui.value.copy(ruta = RutaState(cargando = true))
+            runCatching {
+                val res = api.getRuta("$origenLng,$origenLat", "$destinoLng,$destinoLat")
+                val ruta = res.routes?.firstOrNull()
+                if (ruta != null) {
+                    val coords = ruta.geometry.coordinates.map { (lng, lat) ->
+                        Pair(lat, lng)
+                    }
+                    _ui.value = _ui.value.copy(
+                        ruta = RutaState(
+                            coordinates = coords,
+                            distance = ruta.distance,
+                            duration = ruta.duration,
+                        ),
+                    )
+                } else {
+                    _ui.value = _ui.value.copy(
+                        ruta = RutaState(),
+                        mensaje = "No se encontró ruta",
+                    )
+                }
+            }.onFailure { e ->
+                _ui.value = _ui.value.copy(
+                    ruta = RutaState(),
+                    mensaje = e.message ?: "Error al calcular ruta",
+                )
+            }
+        }
+    }
+
+    fun limpiarRuta() {
+        _ui.value = _ui.value.copy(ruta = RutaState())
+    }
+
+    fun seleccionarLugar(lugar: Lugar?) {
+        _ui.value = _ui.value.copy(lugarSeleccionado = lugar)
     }
 
     fun limpiarMensaje() {
