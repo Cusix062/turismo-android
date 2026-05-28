@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 fun LoginScreen(
     onLogin: (email: String, password: String) -> Unit,
     onRegister: (email: String, nombre: String, password: String) -> Unit,
+    onInvitado: () -> Unit,
     mensaje: String?,
     cargando: Boolean,
 ) {
@@ -180,11 +181,23 @@ fun LoginScreen(
 
             TextButton(onClick = {
                 esRegistro = !esRegistro
-                mensaje?.let { /* limpia mensaje al cambiar modo */ }
             }) {
                 Text(
                     if (esRegistro) "¿Ya tienes cuenta? Inicia sesión"
                     else "¿No tienes cuenta? Regístrate",
+                )
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            TextButton(
+                onClick = onInvitado,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    "Entrar como invitado",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }

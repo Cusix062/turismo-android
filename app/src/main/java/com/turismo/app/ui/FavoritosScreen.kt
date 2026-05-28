@@ -61,6 +61,8 @@ fun FavoritosScreen(
         }
     }
 
+    val esInvitado = estado.auth.invitado
+
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
@@ -93,17 +95,19 @@ fun FavoritosScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Text(
-                        text = "\uD83D\uDC94",
+                        text = if (esInvitado) "\uD83D\uDD12" else "\uD83D\uDC94",
                         style = MaterialTheme.typography.displayLarge,
                     )
                     Spacer(modifier = Modifier.width(16.dp))
                     Text(
-                        "Aún no tienes favoritos.",
+                        if (esInvitado) "Inicia sesión para guardar favoritos"
+                        else "Aún no tienes favoritos.",
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.padding(top = 8.dp),
                     )
                     Text(
-                        "Explora lugares y añade los que más te gusten.",
+                        if (esInvitado) "Regístrate o inicia sesión para guardar tus lugares favoritos y acceder a todas las funciones."
+                        else "Explora lugares y añade los que más te gusten.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     )

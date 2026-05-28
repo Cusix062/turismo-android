@@ -33,6 +33,7 @@ fun TurismoRoot(viewModel: TurismoViewModel) {
         LoginScreen(
             onLogin = { email, password -> viewModel.login(email, password) },
             onRegister = { email, nombre, password -> viewModel.register(email, nombre, password) },
+            onInvitado = { viewModel.loguearComoInvitado() },
             mensaje = ui.auth.error,
             cargando = ui.auth.cargando,
         )

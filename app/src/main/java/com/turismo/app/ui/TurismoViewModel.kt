@@ -24,6 +24,7 @@ data class LocationState(
 
 data class AuthState(
     val logueado: Boolean = false,
+    val invitado: Boolean = false,
     val usuario: UsuarioToken? = null,
     val cargando: Boolean = false,
     val error: String? = null,
@@ -125,6 +126,13 @@ class TurismoViewModel : ViewModel() {
         }
     }
 
+    fun loguearComoInvitado() {
+        ApiClient.token = null
+        _ui.value = _ui.value.copy(
+            auth = AuthState(logueado = true, invitado = true),
+        )
+    }
+
     fun cerrarSesion() {
         ApiClient.token = null
         _ui.value = TurismoUiState(
@@ -153,7 +161,7 @@ class TurismoViewModel : ViewModel() {
             _ui.value = _ui.value.copy(cargando = true, mensaje = null)
             runCatching {
                 val lugares = api.getLugares().data
-                val favoritos = if (_ui.value.auth.logueado) {
+                val favoritos = if (_ui.value.auth.logueado && !_ui.value.auth.invitado) {
                     api.getFavoritos().data
                 } else emptyList()
                 _ui.value = _ui.value.copy(
@@ -182,7 +190,7 @@ class TurismoViewModel : ViewModel() {
                     runCatching { api.getLugaresNuevos().data }.getOrDefault(emptyList())
                 }
                 val favoritosDeferred = async {
-                    if (_ui.value.auth.logueado) {
+                    if (_ui.value.auth.logueado && !_ui.value.auth.invitado) {
                         runCatching { api.getFavoritos().data }.getOrDefault(emptyList())
                     } else emptyList()
                 }
